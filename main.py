@@ -129,6 +129,9 @@ def get_custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
     
+    # Decide a URL base com base na variável de ambiente
+    server_url = os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:10000")
+    
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
@@ -136,10 +139,9 @@ def get_custom_openapi():
         routes=app.routes,
     )
     
-    # Adicionar servidores
+    # Adicionar servidores de forma dinâmica
     openapi_schema["servers"] = [
-        {"url": "https://bot-discord-z73o.onrender.com", "description": "Servidor de produção"},
-        {"url": "http://localhost:10000", "description": "Servidor local para desenvolvimento"}
+        {"url": server_url, "description": "API Discord"}
     ]
     
     # Adicionar configurações específicas para o MCP
