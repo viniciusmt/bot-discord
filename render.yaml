@@ -9,8 +9,6 @@ services:
         sync: false
       - key: DEFAULT_DISCORD_CHANNEL_ID
         sync: false
-      - key: DEFAULT_DISCORD_GUILD_ID
-        sync: false
       - key: LOG_LEVEL
         value: INFO
     autoDeploy: true
