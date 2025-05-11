@@ -142,10 +142,6 @@ def get_custom_openapi():
         {"url": "http://localhost:10000", "description": "Servidor local para desenvolvimento"}
     ]
     
-    # Resto do código de configuração MCP continua igual
-    openapi_schema["info"]["x-mcp-capabilities"] = {
-        # ... o restante do seu código está aqui
-    
     # Adicionar configurações específicas para o MCP
     openapi_schema["info"]["x-mcp-capabilities"] = {
         "tools": {
