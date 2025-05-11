@@ -5,5 +5,7 @@ pydantic==2.3.0
 requests==2.31.0
 python-dotenv==1.0.0
 # Adicione aqui qualquer outro pacote relacionado ao MCP se for público
-from mcp.server.fastmcp import FastMCP
 from discord_api import DiscordAPI
+
+# Current FastMCP SDK
+git+https://github.com/modelcontextprotocol/python-sdk.git@main
