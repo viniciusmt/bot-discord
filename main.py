@@ -125,7 +125,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Função para gerar esquema OpenAPI personalizado compatível com MCP
 def get_custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
@@ -136,6 +135,16 @@ def get_custom_openapi():
         description=app.description,
         routes=app.routes,
     )
+    
+    # Adicionar servidores
+    openapi_schema["servers"] = [
+        {"url": "https://bot-discord-z73o.onrender.com", "description": "Servidor de produção"},
+        {"url": "http://localhost:10000", "description": "Servidor local para desenvolvimento"}
+    ]
+    
+    # Resto do código de configuração MCP continua igual
+    openapi_schema["info"]["x-mcp-capabilities"] = {
+        # ... o restante do seu código está aqui
     
     # Adicionar configurações específicas para o MCP
     openapi_schema["info"]["x-mcp-capabilities"] = {
