@@ -1,19 +1,31 @@
 # main.py
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends, Query
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os
 import sys
 import json
+import logging
 
-# Importar apenas a API do Discord
+# Configuração de logging
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Importar a API do Discord
 from discord_api import DiscordAPI
 
-# Verificar token do Discord
+# Variáveis de ambiente
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+DEFAULT_DISCORD_CHANNEL_ID = os.getenv("DEFAULT_DISCORD_CHANNEL_ID")
+
+# Verificar token do Discord
 if not DISCORD_TOKEN:
-    print("ERRO: DISCORD_TOKEN não encontrado nas variáveis de ambiente!", file=sys.stderr)
+    logger.error("DISCORD_TOKEN não encontrado nas variáveis de ambiente!")
     # Não encerraremos, pois o Render precisa que o servidor continue rodando
 
 # Inicializar a API do Discord
@@ -22,16 +34,27 @@ discord_api = DiscordAPI(DISCORD_TOKEN)
 # Criação da aplicação FastAPI
 app = FastAPI(
     title="Discord MCP API",
-    description="API para integração de Discord com MCP (Model Control Protocol)",
+    description="API para integração de Discord com MCP (Model Control Protocol) e GPT",
     version="1.0.0",
 )
 
-# O resto do código permanece igual...
+# Configuração de CORS para permitir requisições de diferentes origens
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permita todas as origens em ambiente de desenvolvimento
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Modelos Pydantic para validação dos dados
 class SendMessageRequest(BaseModel):
     channel_id: str
     message: str
+
+class QuickMessageRequest(BaseModel):
+    message: str
+    channel_id: Optional[str] = None  # Opcional, usa o padrão se não for fornecido
 
 class GetMessagesRequest(BaseModel):
     channel_id: str
@@ -52,26 +75,63 @@ async def root():
     return {
         "name": "Discord MCP API",
         "version": "1.0.0",
-        "description": "API para integração de Discord com MCP"
+        "description": "API para integração de Discord com MCP e GPT",
+        "default_channel_configured": bool(DEFAULT_DISCORD_CHANNEL_ID)
     }
 
 @app.post("/send-message", response_model=GenericResponse, tags=["Discord"])
 async def send_message(request: SendMessageRequest):
     """
-    Envia uma mensagem para um canal do Discord.
+    Envia uma mensagem para um canal específico do Discord.
     
     - **channel_id**: ID do canal do Discord
     - **message**: Conteúdo da mensagem a ser enviada
     """
     try:
+        logger.info(f"Enviando mensagem para o canal {request.channel_id}")
         result = discord_api.send_message(request.channel_id, request.message)
-        if "error" in result:
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Erro ao enviar mensagem: {result['error']}")
             return {"success": False, "error": result["error"]}
-        return {"success": True, "message": "Mensagem enviada com sucesso", "data": result}
+        return {
+            "success": True, 
+            "message": "Mensagem enviada com sucesso", 
+            "data": result
+        }
     except Exception as e:
+        logger.exception("Exceção ao enviar mensagem")
         return {"success": False, "error": str(e)}
 
-@app.post("/get-messages", tags=["Discord"])
+@app.post("/quick-message", response_model=GenericResponse, tags=["Discord"])
+async def quick_message(request: QuickMessageRequest):
+    """
+    Envia uma mensagem rápida para o canal padrão ou para um canal específico.
+    
+    - **message**: Conteúdo da mensagem a ser enviada
+    - **channel_id**: (Opcional) ID do canal do Discord. Se não fornecido, usa o canal padrão configurado
+    """
+    channel_id = request.channel_id or DEFAULT_DISCORD_CHANNEL_ID
+    
+    if not channel_id:
+        logger.error("Canal não especificado e canal padrão não configurado")
+        return {"success": False, "error": "Canal não especificado e canal padrão não configurado"}
+    
+    try:
+        logger.info(f"Enviando mensagem rápida para o canal {channel_id}")
+        result = discord_api.send_message(channel_id, request.message)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Erro ao enviar mensagem rápida: {result['error']}")
+            return {"success": False, "error": result["error"]}
+        return {
+            "success": True, 
+            "message": f"Mensagem enviada para o canal {channel_id}", 
+            "data": result
+        }
+    except Exception as e:
+        logger.exception("Exceção ao enviar mensagem rápida")
+        return {"success": False, "error": str(e)}
+
+@app.post("/get-messages", response_model=GenericResponse, tags=["Discord"])
 async def get_messages(request: GetMessagesRequest):
     """
     Obtém mensagens recentes de um canal do Discord.
@@ -80,8 +140,10 @@ async def get_messages(request: GetMessagesRequest):
     - **limit**: Número máximo de mensagens a serem retornadas (padrão: 10)
     """
     try:
+        logger.info(f"Obtendo {request.limit} mensagens do canal {request.channel_id}")
         result = discord_api.get_channel_messages(request.channel_id, request.limit)
         if isinstance(result, dict) and "error" in result:
+            logger.error(f"Erro ao obter mensagens: {result['error']}")
             return {"success": False, "error": result["error"]}
         
         # Simplificar as mensagens para retornar apenas os dados importantes
@@ -98,11 +160,55 @@ async def get_messages(request: GetMessagesRequest):
                 "timestamp": msg.get("timestamp")
             })
         
-        return {"success": True, "data": {"messages": simplified_messages}}
+        return {
+            "success": True, 
+            "data": {"messages": simplified_messages, "count": len(simplified_messages)}
+        }
     except Exception as e:
+        logger.exception("Exceção ao obter mensagens")
         return {"success": False, "error": str(e)}
 
-@app.post("/get-channels", tags=["Discord"])
+@app.get("/default-messages", response_model=GenericResponse, tags=["Discord"])
+async def get_default_messages(limit: int = Query(10, description="Número máximo de mensagens")):
+    """
+    Obtém mensagens recentes do canal padrão configurado.
+    
+    - **limit**: Número máximo de mensagens a serem retornadas (padrão: 10)
+    """
+    if not DEFAULT_DISCORD_CHANNEL_ID:
+        logger.error("Canal padrão não configurado")
+        return {"success": False, "error": "Canal padrão não configurado"}
+    
+    try:
+        logger.info(f"Obtendo {limit} mensagens do canal padrão {DEFAULT_DISCORD_CHANNEL_ID}")
+        result = discord_api.get_channel_messages(DEFAULT_DISCORD_CHANNEL_ID, limit)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Erro ao obter mensagens do canal padrão: {result['error']}")
+            return {"success": False, "error": result["error"]}
+        
+        # Simplificar as mensagens
+        simplified_messages = []
+        for msg in result:
+            simplified_messages.append({
+                "id": msg.get("id"),
+                "content": msg.get("content"),
+                "author": {
+                    "id": msg.get("author", {}).get("id"),
+                    "username": msg.get("author", {}).get("username"),
+                    "bot": msg.get("author", {}).get("bot", False)
+                },
+                "timestamp": msg.get("timestamp")
+            })
+        
+        return {
+            "success": True, 
+            "data": {"messages": simplified_messages, "count": len(simplified_messages)}
+        }
+    except Exception as e:
+        logger.exception("Exceção ao obter mensagens do canal padrão")
+        return {"success": False, "error": str(e)}
+
+@app.post("/get-channels", response_model=GenericResponse, tags=["Discord"])
 async def get_channels(request: GetChannelsRequest):
     """
     Obtém a lista de canais de um servidor do Discord.
@@ -110,8 +216,10 @@ async def get_channels(request: GetChannelsRequest):
     - **guild_id**: ID do servidor do Discord
     """
     try:
+        logger.info(f"Obtendo canais do servidor {request.guild_id}")
         result = discord_api.get_guild_channels(request.guild_id)
         if isinstance(result, dict) and "error" in result:
+            logger.error(f"Erro ao obter canais: {result['error']}")
             return {"success": False, "error": result["error"]}
         
         # Simplificar os canais para retornar apenas os dados importantes
@@ -124,8 +232,12 @@ async def get_channels(request: GetChannelsRequest):
                 "parent_id": channel.get("parent_id")
             })
         
-        return {"success": True, "data": {"channels": simplified_channels}}
+        return {
+            "success": True, 
+            "data": {"channels": simplified_channels, "count": len(simplified_channels)}
+        }
     except Exception as e:
+        logger.exception("Exceção ao obter canais")
         return {"success": False, "error": str(e)}
 
 # Rota para lidar com requisições MCP diretamente
@@ -143,6 +255,8 @@ async def handle_mcp(request: Request):
         params = body.get("params", {})
         request_id = body.get("id", "unknown")
         
+        logger.info(f"Recebida requisição MCP: método={method}, id={request_id}")
+        
         # Processar com base no método
         if method == "invoke":
             tool_method = params.get("method")
@@ -153,7 +267,11 @@ async def handle_mcp(request: Request):
                 content = arguments.get("content")
                 result = discord_api.send_message(channel_id, content)
                 if "error" in result:
-                    return {"success": False, "error": result["error"]}
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": result["error"]}
+                    }
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
@@ -165,7 +283,11 @@ async def handle_mcp(request: Request):
                 limit = arguments.get("limit", 10)
                 result = discord_api.get_channel_messages(channel_id, limit)
                 if isinstance(result, dict) and "error" in result:
-                    return {"success": False, "error": result["error"]}
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": result["error"]}
+                    }
                 
                 # Simplificar as mensagens
                 simplified_messages = []
@@ -190,7 +312,11 @@ async def handle_mcp(request: Request):
                 guild_id = arguments.get("guild_id")
                 result = discord_api.get_guild_channels(guild_id)
                 if isinstance(result, dict) and "error" in result:
-                    return {"success": False, "error": result["error"]}
+                    return {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": result["error"]}
+                    }
                 
                 # Simplificar os canais
                 simplified_channels = []
@@ -208,6 +334,7 @@ async def handle_mcp(request: Request):
                 }
             
             else:
+                logger.warning(f"Método MCP desconhecido: {tool_method}")
                 return {
                     "jsonrpc": "2.0",
                     "id": request_id,
@@ -281,6 +408,7 @@ async def handle_mcp(request: Request):
             }
         
         else:
+            logger.warning(f"Método MCP desconhecido: {method}")
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -288,6 +416,7 @@ async def handle_mcp(request: Request):
             }
             
     except Exception as e:
+        logger.exception(f"Exceção ao processar requisição MCP: {str(e)}")
         return JSONResponse(
             status_code=500,
             content={
@@ -298,8 +427,7 @@ async def handle_mcp(request: Request):
         )
 
 if __name__ == "__main__":
-    # Não é necessário incluir o código de inicialização do uvicorn aqui, 
-    # pois o Render vai gerenciar isso
+    # Para execução local e testes
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
