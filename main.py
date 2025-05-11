@@ -7,7 +7,7 @@ import os
 import sys
 import json
 
-# Importar as classes/funções dos seus arquivos existentes
+# Importar apenas a API do Discord
 from discord_api import DiscordAPI
 
 # Verificar token do Discord
@@ -25,6 +25,8 @@ app = FastAPI(
     description="API para integração de Discord com MCP (Model Control Protocol)",
     version="1.0.0",
 )
+
+# O resto do código permanece igual...
 
 # Modelos Pydantic para validação dos dados
 class SendMessageRequest(BaseModel):
