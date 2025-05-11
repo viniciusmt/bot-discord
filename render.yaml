@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: discord-mcp-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn main:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: DEFAULT_DISCORD_CHANNEL_ID
+        sync: false
+      - key: DEFAULT_DISCORD_GUILD_ID
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
+    autoDeploy: true
