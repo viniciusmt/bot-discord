@@ -8,6 +8,7 @@ from typing import Optional, List, Dict, Any
 import os
 import sys
 import json
+import requests
 import logging
 
 # Configuração de logging
@@ -17,9 +18,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Importar a API do Discord
-from discord_api import DiscordAPI
-
 # Variáveis de ambiente
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 DEFAULT_DISCORD_CHANNEL_ID = os.getenv("DEFAULT_DISCORD_CHANNEL_ID")
@@ -28,6 +26,85 @@ DEFAULT_DISCORD_CHANNEL_ID = os.getenv("DEFAULT_DISCORD_CHANNEL_ID")
 if not DISCORD_TOKEN:
     logger.error("DISCORD_TOKEN não encontrado nas variáveis de ambiente!")
     # Não encerraremos, pois o Render precisa que o servidor continue rodando
+
+# Implementação inline da API do Discord
+class DiscordAPI:
+    def __init__(self, token):
+        self.token = token
+        self.api_base = "https://discord.com/api/v10"
+        self.headers = {
+            "Authorization": f"Bot {self.token}",
+            "Content-Type": "application/json"
+        }
+        logger.info(f"DiscordAPI inicializado com token: {token[:5]}...")
+
+    def send_message(self, channel_id, content):
+        """
+        Envia uma mensagem para um canal específico do Discord.
+        
+        Args:
+            channel_id (str): ID do canal
+            content (str): Conteúdo da mensagem
+            
+        Returns:
+            dict: Resposta da API
+        """
+        url = f"{self.api_base}/channels/{channel_id}/messages"
+        data = {
+            "content": content
+        }
+        
+        try:
+            response = requests.post(url, headers=self.headers, json=data)
+            response.raise_for_status()
+            logger.info(f"Mensagem enviada com sucesso para o canal {channel_id}")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Erro ao enviar mensagem: {str(e)}")
+            return {"error": str(e)}
+    
+    def get_channel_messages(self, channel_id, limit=10):
+        """
+        Obtém as mensagens recentes de um canal.
+        
+        Args:
+            channel_id (str): ID do canal
+            limit (int): Número máximo de mensagens a obter
+            
+        Returns:
+            list: Lista de mensagens
+        """
+        url = f"{self.api_base}/channels/{channel_id}/messages?limit={limit}"
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            logger.info(f"Obtidas {len(response.json())} mensagens do canal {channel_id}")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Erro ao obter mensagens: {str(e)}")
+            return {"error": str(e)}
+    
+    def get_guild_channels(self, guild_id):
+        """
+        Obtém os canais de um servidor.
+        
+        Args:
+            guild_id (str): ID do servidor
+            
+        Returns:
+            list: Lista de canais
+        """
+        url = f"{self.api_base}/guilds/{guild_id}/channels"
+        
+        try:
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            logger.info(f"Obtidos {len(response.json())} canais do servidor {guild_id}")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Erro ao obter canais: {str(e)}")
+            return {"error": str(e)}
 
 # Inicializar a API do Discord
 discord_api = DiscordAPI(DISCORD_TOKEN)
@@ -70,14 +147,14 @@ def get_custom_openapi():
                     "properties": {
                         "channel_id": {
                             "type": "string",
-                            "description": "ID do canal do Discord"
+                            "description": "ID do canal do Discord (opcional se canal padrão configurado)"
                         },
                         "content": {
                             "type": "string",
                             "description": "Conteúdo da mensagem"
                         }
                     },
-                    "required": ["channel_id", "content"]
+                    "required": ["content"]
                 }
             },
             "get_messages": {
@@ -268,6 +345,38 @@ async def get_default_messages(limit: int = Query(10, description="Número máxi
         }
     except Exception as e:
         logger.exception("Exceção ao obter mensagens do canal padrão")
+        return {"success": False, "error": str(e)}
+
+@app.post("/get-channels", response_model=GenericResponse, tags=["Discord"])
+async def get_channels(request: GetChannelsRequest):
+    """
+    Obtém a lista de canais de um servidor do Discord.
+    
+    - **guild_id**: ID do servidor do Discord
+    """
+    try:
+        logger.info(f"Obtendo canais do servidor {request.guild_id}")
+        result = discord_api.get_guild_channels(request.guild_id)
+        if isinstance(result, dict) and "error" in result:
+            logger.error(f"Erro ao obter canais: {result['error']}")
+            return {"success": False, "error": result["error"]}
+        
+        # Simplificar os canais para retornar apenas os dados importantes
+        simplified_channels = []
+        for channel in result:
+            simplified_channels.append({
+                "id": channel.get("id"),
+                "name": channel.get("name"),
+                "type": channel.get("type"),
+                "parent_id": channel.get("parent_id")
+            })
+        
+        return {
+            "success": True, 
+            "data": {"channels": simplified_channels, "count": len(simplified_channels)}
+        }
+    except Exception as e:
+        logger.exception("Exceção ao obter canais")
         return {"success": False, "error": str(e)}
 
 # Rota para lidar com requisições MCP diretamente
